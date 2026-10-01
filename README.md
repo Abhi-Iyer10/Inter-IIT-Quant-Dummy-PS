@@ -9,7 +9,7 @@ This document specifies the complete system architecture for the quantitative tr
 
 The system supports two distinct problem tracks:
 * **Track A (Daily Cross-Sectional Strategy):** 25 large-cap assets, daily OHLCV, volatility-adjusted position sizing, periodic portfolio rebalancing, and walk-forward out-of-sample (OOS) validation.
-* **Track B (High-Frequency Micro-Regime & Flash Crash Detection):** 1-second microstructure ticks ($\approx 3.88\text{M}$ ticks over 45 days), aggressive order flow imbalance (OFI), high-frequency volatility modeling, dynamic regime switching, and strict End-of-Day (EOD) flattening.
+* **Track B (High-Frequency Micro-Regime & Flash Crash Detection):** 1-second microstructure ticks ($\approx 3.88\text{M}$ ticks over 45 days), aggressive order flow imbalance (OFI), high-frequency volatility modeling, continuous 24-hour dynamic regime switching, and strict non-negative capital enforcement.
 
 ### Core Design Objectives
 1. **Zero Lookahead Bias:** Event-driven, tick-by-tick / bar-by-bar execution. Orders placed at step $t$ are filled at the Open price of step $t+1$.
@@ -66,7 +66,7 @@ flowchart TB
         DataFeed["Streaming Data Feeder\n(In-Sample & Held-Out OOS)"]
         ExecEngine["Execution & Slippage Engine\n(Fills at t+1 Open)"]
         Ledger["Portfolio & Accounting Ledger\n(Cash, Positions, Mark-to-Market)"]
-        RuleGuard["Constraint & Rule Enforcer\n(Leverage <= 1.0, EOD Flat)"]
+        RuleGuard["Constraint & Rule Enforcer\n(Leverage <= 1.0, Capital >= 0)"]
         MetricsEng["Analytics & Validation Engine\n(Sharpe + Bootstrap CI, Drawdowns)"]
         BatchHarness["Batch Grader (evaluate_all.sh)\n(Process Isolation, Timeouts)"]
     end
@@ -145,7 +145,7 @@ The framework models both tracks under a single abstraction layer, standardizing
 |                        |                                       | count, taker_buy_vol   |
 | Decision Interface     | Weight vector: w in R^25              | Weight scalar: w in R  |
 | Rebalancing Cadence    | Scheduled (e.g., every 5 days)        | Event / Regime-driven  |
-| Core Rule / Constraint | Gross leverage <= 1.0 (no borrowing)  | Strict EOD Flatten     |
+| Core Rule / Constraint | Gross leverage <= 1.0 (no borrowing)  | Gross leverage <= 1.0, Capital >= 0 |
 +-----------------------------------------------------------------------------------------+
 ```
 
@@ -192,19 +192,16 @@ To ensure fair competition, the backtester includes an automated **Rule Guard** 
 
 ```mermaid
 flowchart TD
-    W["Participant Target Weights w(t)"] --> CheckLev{"Gross Leverage\nsum(|w|) <= 1.0?"}
+    W["Participant Target Weights w(t)"] --> CheckCap{"Account Capital\nEquity > 0?"}
     
+    CheckCap -->|No| ForceHalt["Capital <= 0 (Bankrupt)\nForce Weights = 0.0 & Liquidate"]
+    CheckCap -->|Yes| CheckLev{"Gross Leverage\nsum(|w|) <= 1.0?"}
+
     CheckLev -->|Yes| ApplyLev["Keep Raw Target Weights"]
     CheckLev -->|No| ClampLev["Clamp: w_adj = w / sum(|w|)\nLog Leverage Violation"]
 
-    ApplyLev --> CheckTrack{"Track A or B?"}
-    ClampLev --> CheckTrack
-
-    CheckTrack -->|Track A| ExecA["Execute at Next Open"]
-    CheckTrack -->|Track B| CheckEOD{"Within EOD Flatten Window?\n(Last 5 mins of day)"}
-
-    CheckEOD -->|No| ExecB["Execute at Next Open"]
-    CheckEOD -->|Yes| ForceFlat["Force Target Weight = 0.0\nLog EOD Violation if Participant Held Position"]
+    ApplyLev --> Exec["Execute at Next Open\n(Bounded by Available Cash)"]
+    ClampLev --> Exec
 ```
 
 ### Constraint Rules
@@ -212,9 +209,10 @@ flowchart TD
    - The competition prohibits borrowing and leverage.
    - If $\sum_i |w_i| > 1.0$, the backtester logs a **Leverage Violation** and rescales weights:
      $$w_i^{\text{clamped}} = \frac{w_i}{\sum_k |w_k|}$$
-2. **Track B: Strict End-of-Day (EOD) Flatten Rule:**
-   - All positions must be flat before the daily session closes ($t \pmod{86400} \ge 86100$, final 5 minutes).
-   - If a participant maintains an open position during this window, the backtester logs an **EOD Violation** and forces an immediate market liquidation.
+2. **Strict Non-Negative Capital Constraint:**
+   - Portfolio capital can never be negative.
+   - If marked-to-market equity drops to zero or below ($\text{Equity} \le 0$), all open positions are immediately liquidated, cash and equity are set to $0.0$, the account is marked bankrupt, and trading is permanently halted.
+   - Buy order executions are bounded by available unborrowed cash, guaranteeing cash balance remains non-negative ($\text{Cash} \ge 0$).
 
 ---
 
@@ -257,7 +255,7 @@ For each submission, the engine computes:
 * **Microstructure Diagnostics (Track B):**
   - **Regime Transition Matrix:** Transition probabilities between Normal, High-Volatility, and Crash states.
   - **Crash Lead Time:** Quantifies how many seconds before a flash crash event the model de-risked exposure.
-* **Compliance Checks:** Count of leverage violations, count of EOD violations, memory usage, and execution duration.
+* **Compliance Checks:** Count of leverage violations, account bankruptcy status (capital >= 0), memory usage, and execution duration.
 
 ---
 

@@ -80,7 +80,7 @@ Given daily OHLCV data for a diversified universe of liquid assets, construct a 
 # Track B: Volatility Clustering & Flash Crash Detection (Micro-Regime Switching)
 
 ## Statement
-Given second-by-second OHLCV data for a volatile intraday asset, build a strategy that detects micro-scale volatility regimes and adapts position sizing and exit rules accordingly. You must distinguish normal-volatility trading conditions from flash-crash/high-volatility regimes and reduce or exit exposure before severe drawdowns. All positions must be flat by end of day.
+Given second-by-second OHLCV data for a volatile asset, build a strategy that detects micro-scale volatility regimes and adapts position sizing and exit rules accordingly. You must distinguish normal-volatility trading conditions from flash-crash/high-volatility regimes and reduce or exit exposure before severe drawdowns.
 
 ## Data Provided
 - **Instrument:** High-Frequency Asset Microstructure data.
@@ -110,7 +110,7 @@ Given second-by-second OHLCV data for a volatile intraday asset, build a strateg
 
 3. **Flash-Crash Characterization:** Identify and analyze high-volatility spike events in the data. Examine their precursors and dynamics. What microstructural signals (OFI, volume, momentum, volatility) are most informative?
 
-4. **Strategy & Validation:** Build a strategy that adapts to detected regimes (e.g., position sizing adjusts to regime state). Validate via walk-forward backtesting. Compare regime-adapted performance vs. a naive baseline. All positions must be flat by end of day.
+4. **Strategy & Validation:** Build a strategy that adapts to detected regimes (e.g., position sizing adjusts to regime state). Validate via walk-forward backtesting. Compare regime-adapted performance vs. a naive baseline.
 
 ## Suggested Resources (Expanded)
 
@@ -135,10 +135,11 @@ Given second-by-second OHLCV data for a volatile intraday asset, build a strateg
 # General Guidelines
 
 - The organizer-provided backtester will be released within **5 days** of competition start, with full documentation and a 48-hour Q&A window. All strategies must use this backtester.
-- No leverage (borrowing) is permitted.
+- No leverage (borrowing) is permitted: gross leverage must satisfy $\sum |w_i| \le 1.0$.
+- Capital constraint: Portfolio capital can never be negative. If portfolio equity drops to zero or below, positions are immediately liquidated and trading halts (bankruptcy protection).
 - Both long and short positions are allowed.
 - **Track A:** All positions close on rebalancing dates.
-- **Track B:** All positions must be flat by end of day (strict EOD rule).
+- **Track B:** Continuous high-frequency stream with continuous position holding (no forced session close).
 - The backtester will compute all relevant metrics (Sharpe, CAGR, Calmar, Drawdown, etc.) and generate plots.
 
 # Common Evaluation Rubric
