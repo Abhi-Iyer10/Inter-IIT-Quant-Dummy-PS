@@ -1,6 +1,10 @@
 # Quantitative Trading Backtester & Evaluation System Architecture
 **Inter IIT Tech Meet 15.0 — Quant Selection System Blueprint**
 
+> **Looking for the Participant User Guide & Code Structure Manual?**
+> Read the complete participant manual in **[BACKTESTER_README.md](file:///Users/abhirajraje/Documents/Backtester/BACKTESTER_README.md)**.
+> For dataset definitions and schemas, refer to **[DATASET_README.md](file:///Users/abhirajraje/Documents/Backtester/DATASET_README.md)**.
+
 ---
 
 ## 1. Executive Summary & Design Goals
