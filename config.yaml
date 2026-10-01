@@ -1,0 +1,24 @@
+# System Configuration File - Inter IIT Tech Meet 15.0 Quant Evaluation
+
+# Active problem track to evaluate: "A" (Daily Cross-Sectional) or "B" (1-second Microstructure)
+track: "A"
+
+# Core Backtest Parameters
+initial_cash: 100000.0
+slippage_rate: 0.0000      # 5 basis points (0.05%) execution slippage
+commission_rate: 0.0001    # 1 basis point (0.01%) transaction commission
+
+# Track A Settings
+track_a:
+  data_path: "data/Dataset_PS-A.csv"
+  rebalance_cadence: 5     # Rebalance every N trading days
+
+# Track B Settings
+track_b:
+  data_path: "data/ASSET_ALPHA_1s.parquet"
+  symbol: "ALPHA"
+  max_ticks: null          # Set integer (e.g., 86400 for 1 full day) for fast local debugging, or null for all 3.88M ticks
+
+# Output & Artifacts
+output_dir: "results"
+generate_plot: true
