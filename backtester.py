@@ -55,6 +55,26 @@ class BacktestResult:
     calmar_ratio: float
     leverage_violations: int
     is_bankrupt: bool
+
+    # Trading activity & frequency diagnostics
+    total_trades: int = 0
+    buy_trades: int = 0
+    sell_trades: int = 0
+    trading_frequency_per_day: float = 0.0
+    avg_trade_gap_steps: float = 0.0
+    median_trade_gap_steps: float = 0.0
+    min_trade_gap_steps: int = 0
+    max_trade_gap_steps: int = 0
+    market_exposure_pct: float = 0.0
+    mean_gross_leverage: float = 0.0
+    max_gross_leverage: float = 0.0
+    total_turnover_pct: float = 0.0
+    total_turnover_value: float = 0.0
+    total_commission_paid: float = 0.0
+    total_slippage_paid: float = 0.0
+    avg_trade_value: float = 0.0
+    daily_win_rate_pct: float = 0.0
+
     metrics_summary: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -101,6 +121,18 @@ class RuleGuard:
         return adjusted_weights
 
 
+@dataclass
+class TradeRecord:
+    step: int
+    ticker: str
+    side: str            # "BUY" or "SELL"
+    shares: float        # positive quantity executed
+    price: float         # execution fill price
+    value: float         # total trade dollar value
+    commission: float    # transaction commission paid
+    slippage: float      # execution slippage cost
+
+
 class AccountingLedger:
     """
     Portfolio & Accounting Ledger:
@@ -108,6 +140,7 @@ class AccountingLedger:
     - Enforces that capital can NEVER be negative (capital >= 0.0 at all times)
     - Executes orders at t+1 Open with slippage and commission
     - Marks-to-market at t+1 Close
+    - Tracks trade-level execution diagnostics
     """
 
     def __init__(
@@ -124,11 +157,18 @@ class AccountingLedger:
         self.positions: Dict[str, float] = {}
         self.is_bankrupt: bool = False
 
+        # Trade diagnostics tracking
+        self.trades: List[TradeRecord] = []
+        self.total_commission_paid: float = 0.0
+        self.total_slippage_paid: float = 0.0
+        self.total_turnover_value: float = 0.0
+
     def execute_pending_orders(
         self,
         target_weights: Dict[str, float],
         open_prices: Dict[str, float],
-        base_equity: float
+        base_equity: float,
+        step: int = 0
     ) -> None:
         """
         Fill orders at t+1 Open price based on target weights decided at t.
@@ -167,8 +207,10 @@ class AccountingLedger:
         # Execute sell orders first (generating cash)
         for ticker, delta_shares, open_price in sell_orders:
             fill_price = open_price * (1.0 - self.slippage_rate)
-            proceeds = abs(delta_shares) * fill_price
+            executed_shares = abs(delta_shares)
+            proceeds = executed_shares * fill_price
             commission = proceeds * self.commission_rate
+            slippage_cost = executed_shares * (open_price - fill_price)
             net_cash_change = proceeds - commission
             
             self.cash = max(0.0, self.cash + net_cash_change)
@@ -178,6 +220,21 @@ class AccountingLedger:
                 self.positions.pop(ticker, None)
             else:
                 self.positions[ticker] = new_shares
+
+            # Record trade diagnostics
+            self.total_commission_paid += commission
+            self.total_slippage_paid += slippage_cost
+            self.total_turnover_value += proceeds
+            self.trades.append(TradeRecord(
+                step=step,
+                ticker=ticker,
+                side="SELL",
+                shares=executed_shares,
+                price=fill_price,
+                value=proceeds,
+                commission=commission,
+                slippage=slippage_cost
+            ))
 
         # Execute buy orders (bounded strictly by available cash - no negative cash/borrowing)
         for ticker, delta_shares, open_price in buy_orders:
@@ -196,6 +253,7 @@ class AccountingLedger:
 
             trade_value = executed_shares * fill_price
             commission = trade_value * self.commission_rate
+            slippage_cost = executed_shares * (fill_price - open_price)
             total_outflow = trade_value + commission
 
             self.cash = max(0.0, self.cash - total_outflow)
@@ -205,6 +263,21 @@ class AccountingLedger:
                 self.positions.pop(ticker, None)
             else:
                 self.positions[ticker] = new_shares
+
+            # Record trade diagnostics
+            self.total_commission_paid += commission
+            self.total_slippage_paid += slippage_cost
+            self.total_turnover_value += trade_value
+            self.trades.append(TradeRecord(
+                step=step,
+                ticker=ticker,
+                side="BUY",
+                shares=executed_shares,
+                price=fill_price,
+                value=trade_value,
+                commission=commission,
+                slippage=slippage_cost
+            ))
 
     def mark_to_market(self, close_prices: Dict[str, float]) -> float:
         """
@@ -257,7 +330,9 @@ class MetricsEngine:
         end_time: float,
         leverage_violations: int,
         is_bankrupt: bool,
-        steps_per_day: int = 1
+        steps_per_day: int = 1,
+        leverage_curve: Optional[np.ndarray] = None,
+        ledger: Optional[AccountingLedger] = None
     ) -> BacktestResult:
         total_steps = len(equity_curve)
         duration = max(1e-4, end_time - start_time)
@@ -287,7 +362,7 @@ class MetricsEngine:
         else:
             returns = np.diff(equity_curve) / np.maximum(1e-8, equity_curve[:-1])
             annual_factor = 252.0
-            days_elapsed = max(1.0, total_steps)
+            days_elapsed = max(1.0, float(total_steps))
 
         # Clean NaNs or Infs
         returns = returns[np.isfinite(returns)]
@@ -325,6 +400,58 @@ class MetricsEngine:
         # Stationary Block-Bootstrap 95% Confidence Interval for Sharpe
         sharpe_ci = MetricsEngine._bootstrap_sharpe_ci(returns, annual_factor, num_samples=1000)
 
+        # Trade diagnostics from ledger
+        trades = ledger.trades if ledger is not None else []
+        total_trades = len(trades)
+        buy_trades = sum(1 for tr in trades if tr.side == "BUY")
+        sell_trades = sum(1 for tr in trades if tr.side == "SELL")
+        total_commission_paid = float(ledger.total_commission_paid) if ledger is not None else 0.0
+        total_slippage_paid = float(ledger.total_slippage_paid) if ledger is not None else 0.0
+        total_turnover_value = float(ledger.total_turnover_value) if ledger is not None else 0.0
+        total_turnover_pct = float((total_turnover_value / initial_cash) * 100.0) if initial_cash > 0 else 0.0
+        avg_trade_value = float(total_turnover_value / total_trades) if total_trades > 0 else 0.0
+
+        # Trading frequency
+        days_elapsed_val = max(1e-4, days_elapsed)
+        trading_frequency_per_day = float(total_trades / days_elapsed_val) if days_elapsed > 0 else 0.0
+
+        # Trade gaps (in steps)
+        # Note: In Track B, 1 step = 1 second. In Track A, 1 step = 1 day.
+        if total_trades > 1:
+            trade_steps = sorted(list(set(tr.step for tr in trades)))
+            if len(trade_steps) > 1:
+                gaps = np.diff(trade_steps)
+                avg_trade_gap_steps = float(np.mean(gaps))
+                median_trade_gap_steps = float(np.median(gaps))
+                min_trade_gap_steps = int(np.min(gaps))
+                max_trade_gap_steps = int(np.max(gaps))
+            else:
+                avg_trade_gap_steps = 0.0
+                median_trade_gap_steps = 0.0
+                min_trade_gap_steps = 0
+                max_trade_gap_steps = 0
+        else:
+            avg_trade_gap_steps = 0.0
+            median_trade_gap_steps = 0.0
+            min_trade_gap_steps = 0
+            max_trade_gap_steps = 0
+
+        # Market exposure & Gross leverage diagnostics
+        if leverage_curve is not None and len(leverage_curve) > 0:
+            active_steps = int(np.sum(leverage_curve > 1e-4))
+            market_exposure_pct = float((active_steps / total_steps) * 100.0)
+            mean_gross_leverage = float(np.mean(leverage_curve))
+            max_gross_leverage = float(np.max(leverage_curve))
+        else:
+            market_exposure_pct = 0.0
+            mean_gross_leverage = 0.0
+            max_gross_leverage = 0.0
+
+        # Daily win rate
+        positive_days = int(np.sum(returns > 0.0))
+        total_days_evaluated = len(returns)
+        daily_win_rate_pct = float((positive_days / total_days_evaluated) * 100.0) if total_days_evaluated > 0 else 0.0
+
         metrics_summary = {
             "Track": track,
             "Total Steps": total_steps,
@@ -339,8 +466,25 @@ class MetricsEngine:
             "Sortino Ratio": round(sortino_ratio, 3),
             "Max Drawdown (%)": round(max_drawdown_pct, 2),
             "Calmar Ratio": round(calmar_ratio, 3),
+            "Daily Win Rate (%)": round(daily_win_rate_pct, 2),
+            "Total Trades": total_trades,
+            "Buy Trades": buy_trades,
+            "Sell Trades": sell_trades,
+            "Trading Frequency (trades/day)": round(trading_frequency_per_day, 2),
+            "Average Trade Gap (steps)": round(avg_trade_gap_steps, 2),
+            "Median Trade Gap (steps)": round(median_trade_gap_steps, 2),
+            "Min Trade Gap (steps)": min_trade_gap_steps,
+            "Max Trade Gap (steps)": max_trade_gap_steps,
+            "Market Exposure Time (%)": round(market_exposure_pct, 2),
+            "Mean Gross Leverage": round(mean_gross_leverage, 4),
+            "Max Gross Leverage": round(max_gross_leverage, 4),
             "Gross Leverage Violations": leverage_violations,
             "Account Bankrupt (Capital <= 0)": is_bankrupt,
+            "Total Turnover (%)": round(total_turnover_pct, 2),
+            "Total Turnover Value ($)": round(total_turnover_value, 2),
+            "Average Trade Value ($)": round(avg_trade_value, 2),
+            "Total Commission Paid ($)": round(total_commission_paid, 2),
+            "Total Slippage Paid ($)": round(total_slippage_paid, 2),
         }
 
         return BacktestResult(
@@ -359,6 +503,23 @@ class MetricsEngine:
             calmar_ratio=calmar_ratio,
             leverage_violations=leverage_violations,
             is_bankrupt=is_bankrupt,
+            total_trades=total_trades,
+            buy_trades=buy_trades,
+            sell_trades=sell_trades,
+            trading_frequency_per_day=trading_frequency_per_day,
+            avg_trade_gap_steps=avg_trade_gap_steps,
+            median_trade_gap_steps=median_trade_gap_steps,
+            min_trade_gap_steps=min_trade_gap_steps,
+            max_trade_gap_steps=max_trade_gap_steps,
+            market_exposure_pct=market_exposure_pct,
+            mean_gross_leverage=mean_gross_leverage,
+            max_gross_leverage=max_gross_leverage,
+            total_turnover_pct=total_turnover_pct,
+            total_turnover_value=total_turnover_value,
+            total_commission_paid=total_commission_paid,
+            total_slippage_paid=total_slippage_paid,
+            avg_trade_value=avg_trade_value,
+            daily_win_rate_pct=daily_win_rate_pct,
             metrics_summary=metrics_summary,
         )
 
@@ -484,7 +645,8 @@ class Backtester:
                 self.ledger.execute_pending_orders(
                     target_weights=pending_target_weights,
                     open_prices=open_prices,
-                    base_equity=pending_base_equity
+                    base_equity=pending_base_equity,
+                    step=step_idx
                 )
 
             # Step t Mark-to-Market at Close
@@ -533,11 +695,13 @@ class Backtester:
             end_time=end_time,
             leverage_violations=self.rule_guard.leverage_violations,
             is_bankrupt=self.ledger.is_bankrupt,
-            steps_per_day=1
+            steps_per_day=1,
+            leverage_curve=leverage_curve,
+            ledger=self.ledger
         )
 
         if self.config.save_results:
-            self._save_output(result, equity_curve, leverage_curve, dates)
+            self._save_output(result, equity_curve, leverage_curve, dates, ledger=self.ledger)
 
         return result
 
@@ -615,7 +779,8 @@ class Backtester:
                 self.ledger.execute_pending_orders(
                     target_weights=pending_target_weights,
                     open_prices=open_prices,
-                    base_equity=pending_base_equity
+                    base_equity=pending_base_equity,
+                    step=t
                 )
 
             # Step t Mark-to-Market at Close
@@ -663,11 +828,13 @@ class Backtester:
             end_time=end_time,
             leverage_violations=self.rule_guard.leverage_violations,
             is_bankrupt=self.ledger.is_bankrupt,
-            steps_per_day=86400
+            steps_per_day=86400,
+            leverage_curve=leverage_curve,
+            ledger=self.ledger
         )
 
         if self.config.save_results:
-            self._save_output(result, equity_curve, leverage_curve, timestamps=None)
+            self._save_output(result, equity_curve, leverage_curve, timestamps=None, ledger=self.ledger)
 
         return result
 
@@ -676,7 +843,8 @@ class Backtester:
         result: BacktestResult,
         equity_curve: np.ndarray,
         leverage_curve: np.ndarray,
-        timestamps: Optional[List[Any]] = None
+        timestamps: Optional[List[Any]] = None,
+        ledger: Optional[AccountingLedger] = None
     ) -> None:
         os.makedirs(self.config.output_dir, exist_ok=True)
 
@@ -686,14 +854,33 @@ class Backtester:
             json.dump(result.metrics_summary, f, indent=2)
         print(f"[Backtester] Saved summary metrics to {summary_path}")
 
-        # 2. Save tearsheet.png if requested
+        # 2. Save detailed trades.csv for participant debugging if trades occurred
+        if ledger is not None and ledger.trades:
+            trades_path = os.path.join(self.config.output_dir, "trades.csv")
+            trades_df = pd.DataFrame([
+                {
+                    "step": tr.step,
+                    "ticker": tr.ticker,
+                    "side": tr.side,
+                    "shares": tr.shares,
+                    "price": tr.price,
+                    "value": tr.value,
+                    "commission": tr.commission,
+                    "slippage": tr.slippage
+                }
+                for tr in ledger.trades
+            ])
+            trades_df.to_csv(trades_path, index=False)
+            print(f"[Backtester] Saved {len(trades_df):,} trade logs to {trades_path}")
+
+        # 3. Save 4-panel tearsheet.png if requested
         if self.config.generate_plot:
             try:
                 import matplotlib
                 matplotlib.use('Agg')
                 import matplotlib.pyplot as plt
 
-                fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+                fig, axes = plt.subplots(4, 1, figsize=(12, 13), sharex=True)
                 steps = np.arange(len(equity_curve))
 
                 # Plot 1: Equity Curve
@@ -702,7 +889,7 @@ class Backtester:
                 bankrupt_tag = " [BANKRUPT]" if result.is_bankrupt else ""
                 axes[0].set_title(
                     f"Track {result.track} - Equity Curve | Final: ${result.final_equity:,.2f} "
-                    f"({result.total_return_pct:+.2f}%){bankrupt_tag}"
+                    f"({result.total_return_pct:+.2f}%){bankrupt_tag} | Trades: {result.total_trades:,}"
                 )
                 axes[0].set_ylabel("Equity ($)")
                 axes[0].grid(True, alpha=0.3)
@@ -721,12 +908,26 @@ class Backtester:
                 # Plot 3: Gross Leverage
                 axes[2].plot(steps, leverage_curve, color="#2ca02c", lw=1.2, label="Gross Leverage")
                 axes[2].axhline(1.0, color="red", linestyle="--", label="Leverage Limit (1.0)")
-                axes[2].set_title(f"Gross Leverage Exposure | Violations: {result.leverage_violations}")
+                axes[2].set_title(f"Gross Leverage Exposure | Violations: {result.leverage_violations} | Mean: {result.mean_gross_leverage:.3f}")
                 axes[2].set_ylabel("Leverage (x)")
-                axes[2].set_xlabel("Simulation Step")
                 axes[2].set_ylim(-0.05, 1.25)
                 axes[2].grid(True, alpha=0.3)
                 axes[2].legend(loc="upper left")
+
+                # Plot 4: Cumulative Trades & Execution Cadence
+                cum_trades = np.zeros(len(steps), dtype=np.int64)
+                if ledger is not None and ledger.trades:
+                    trade_steps = [min(len(steps) - 1, max(0, tr.step)) for tr in ledger.trades]
+                    for s in trade_steps:
+                        cum_trades[s] += 1
+                cum_trades_curve = np.cumsum(cum_trades)
+                axes[3].plot(steps, cum_trades_curve, color="#9467bd", lw=1.5, label="Cumulative Trades")
+                gap_str = f"Avg Gap: {result.avg_trade_gap_steps:.1f} steps | Median Gap: {result.median_trade_gap_steps:.1f} steps"
+                axes[3].set_title(f"Trade Execution Cadence | Total Trades: {result.total_trades} | {gap_str}")
+                axes[3].set_ylabel("Trades Executed")
+                axes[3].set_xlabel("Simulation Step")
+                axes[3].grid(True, alpha=0.3)
+                axes[3].legend(loc="upper left")
 
                 plt.tight_layout()
                 plot_path = os.path.join(self.config.output_dir, "tearsheet.png")

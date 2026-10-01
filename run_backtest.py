@@ -31,14 +31,66 @@ def format_table(metrics: dict) -> str:
     lines.append("=" * 65)
     lines.append(f"{'QUANT BACKTEST EVALUATION SUMMARY':^65}")
     lines.append("=" * 65)
-    for k, v in metrics.items():
-        if isinstance(v, float):
-            val_str = f"{v:,.2f}"
-        elif isinstance(v, list):
-            val_str = f"[{v[0]:.2f}, {v[1]:.2f}]"
-        else:
-            val_str = str(v)
-        lines.append(f"  {k:<35}: {val_str:>24}")
+
+    sections = [
+        ("PORTFOLIO PERFORMANCE", [
+            "Track", "Total Steps", "Execution Duration (s)", "Throughput (ticks/s)",
+            "Initial Cash", "Final Equity", "Total Return (%)", "CAGR (%)",
+            "Sharpe Ratio", "Sharpe 95% CI", "Sortino Ratio", "Max Drawdown (%)",
+            "Calmar Ratio", "Daily Win Rate (%)"
+        ]),
+        ("TRADING ACTIVITY & CADENCE", [
+            "Total Trades", "Buy Trades", "Sell Trades",
+            "Trading Frequency (trades/day)", "Average Trade Gap (steps)",
+            "Median Trade Gap (steps)", "Min Trade Gap (steps)", "Max Trade Gap (steps)",
+            "Market Exposure Time (%)"
+        ]),
+        ("EXPOSURE & RISK CONSTRAINTS", [
+            "Mean Gross Leverage", "Max Gross Leverage",
+            "Gross Leverage Violations", "Account Bankrupt (Capital <= 0)"
+        ]),
+        ("TURNOVER & TRANSACTION COSTS", [
+            "Total Turnover (%)", "Total Turnover Value ($)",
+            "Average Trade Value ($)", "Total Commission Paid ($)", "Total Slippage Paid ($)"
+        ]),
+    ]
+
+    used_keys = set()
+    for section_title, keys in sections:
+        section_lines = []
+        for k in keys:
+            if k in metrics:
+                used_keys.add(k)
+                v = metrics[k]
+                if isinstance(v, float):
+                    val_str = f"{v:,.2f}"
+                elif isinstance(v, list):
+                    val_str = f"[{v[0]:.2f}, {v[1]:.2f}]"
+                elif isinstance(v, int):
+                    val_str = f"{v:,}"
+                else:
+                    val_str = str(v)
+                section_lines.append(f"  {k:<35}: {val_str:>24}")
+        if section_lines:
+            lines.append(f"-- {section_title} " + "-" * max(2, 62 - len(section_title)))
+            lines.extend(section_lines)
+
+    # Any remaining keys not in categorized sections
+    remaining = [k for k in metrics if k not in used_keys]
+    if remaining:
+        lines.append("-- OTHER METRICS " + "-" * 48)
+        for k in remaining:
+            v = metrics[k]
+            if isinstance(v, float):
+                val_str = f"{v:,.2f}"
+            elif isinstance(v, list):
+                val_str = f"[{v[0]:.2f}, {v[1]:.2f}]"
+            elif isinstance(v, int):
+                val_str = f"{v:,}"
+            else:
+                val_str = str(v)
+            lines.append(f"  {k:<35}: {val_str:>24}")
+
     lines.append("=" * 65)
     return "\n".join(lines)
 
