@@ -5,7 +5,7 @@ track: "A"
 
 # Core Backtest Parameters
 initial_cash: 100000.0
-slippage_rate: 0.0000      # 5 basis points (0.05%) execution slippage
+slippage_rate: 0.0000      # 0 basis points (0.00%) execution slippage
 commission_rate: 0.0001    # 1 basis point (0.01%) transaction commission
 
 # Track A Settings
