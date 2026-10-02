@@ -55,7 +55,7 @@ The backtester is designed to evaluate quantitative trading strategies under rea
 
 ### Step 1: Set Up Environment
 
-Ensure you have Python 3.9+ installed:
+Ensure you have Python 3.14+ installed:
 
 ```bash
 # Create and activate virtual environment
@@ -69,7 +69,7 @@ pip install -r requirements.txt
 ### Step 2: Run Track A (Daily Cross-Sectional)
 
 ```bash
-python run_backtest.py --track A
+python3 run_backtest.py --track A
 ```
 
 ### Step 3: Run Track B (1-Second Microstructure)
@@ -78,10 +78,10 @@ For rapid local iteration, test against a slice of ticks first (e.g., 1 day = 86
 
 ```bash
 # Fast test: 1 day of streaming data
-python run_backtest.py --track B --max-ticks 86400
+python3 run_backtest.py --track B --max-ticks 86400
 
 # Full backtest: all 3.88M ticks
-python run_backtest.py --track B
+python3 run_backtest.py --track B
 ```
 
 ### Step 4: Run Pre-Submission Sanity Check
@@ -89,7 +89,7 @@ python run_backtest.py --track B
 Before submitting your repository, verify that your code satisfies all structural and risk constraints:
 
 ```bash
-python test_submission.py
+python3 test_submission.py
 ```
 
 ---
@@ -123,8 +123,10 @@ Backtester/
 └── src/                      # [PARTICIPANT SPACE] Your Strategy Code
     ├── __init__.py
     ├── engine.py             # MANDATORY ENTRY POINT: Contains ParticipantStrategy
-    ├── models/               # Your statistical/ML models (GARCH, Kelly, Regime, etc.)
-    └── utils/                # Your feature extraction, math, and data helpers
+    ├── models/               # Your statistical/ML models (GARCH, Kelly, Regime, Regression, etc.)
+    ├── utils/                # Your feature extraction, math, and data helpers
+    ├── research/             # Research, data analysis, and model-training work
+    └── report.pdf            # Strategy rationale, analysis, and approach (max. 10 pages)
 ```
 
 > [!WARNING]
@@ -214,15 +216,20 @@ context.set_target_weight(0.50)  # Allocate 50% of portfolio equity
 
 ### Recommended Directory Modularity
 
-Keep `src/engine.py` concise and maintainable by placing specialized logic in sub-packages:
+Keep `src/engine.py` concise and maintainable by placing specialized logic in sub-packages. An example is given below:
 
 - **`src/models/`**:
-  - `volatility.py`: Realized volatility, EWMA, GARCH(1,1), or Parkinson/Garman-Klass volatility estimators.
-  - `regime.py`: Hidden Markov Models (HMM), threshold autoregression, or volatility clustering detectors.
-  - `kelly.py`: Kelly criterion optimal sizing algorithms and probability prior estimators.
+  - `volatility.py`: Volatility Engine API.
+  - `regime.py`: Regime Detection API.
+  - `kelly.py`: Kelly criterion for portfolio optimisation.
 - **`src/utils/`**:
-  - `microstructure.py`: Rolling Order Flow Imbalance (OFI), VWAP accumulators, and bid-ask proxy estimators.
-  - `math_helpers.py`: Fast exponential smoothers, rolling statistics, and bootstrap confidence intervals.
+  - `microstructure.py`: proxy estimators API.
+  - `math_helpers.py`: Fast exponential smoothers, rolling statistics, and bootstrap confidence intervals API.
+- **`src/research/`**:
+  - `data-analysis.ipynb`: Data analysis, distribution analysis etc.
+  - `model-training.ipynb`: Data preparation, model training, cross validation etc.
+- **`src/report.pdf`**:
+  - A report describing the approach.
 
 ---
 
@@ -440,7 +447,7 @@ When execution completes, a structured evaluation table is printed to your termi
 
 ```text
 =================================================================
-                QUANT BACKTEST EVALUATION SUMMARY            
+                QUANT BACKTEST EVALUATION SUMMARY        
 =================================================================
 -- PORTFOLIO PERFORMANCE -----------------------------------------
   Track                              :                        B
@@ -526,7 +533,7 @@ The backtester automatically renders a 4-panel diagnostic tearsheet:
 Before submitting your repository, execute:
 
 ```bash
-python test_submission.py
+python3 test_submission.py
 ```
 
 The test runner performs 5 mandatory checks:
@@ -536,6 +543,8 @@ The test runner performs 5 mandatory checks:
 3. **Track A Sanity Check:** Feeds synthetic multi-asset bars to test cross-sectional handling and leverage clamping.
 4. **Track B Sanity Check:** Feeds high-frequency microstructure ticks to test OFI, VWAP, and single-asset handling.
 5. **Non-Negative Capital & Leverage Rule Check:** Validates that the strategy respects non-negative cash limits and does not exceed gross leverage $\le 1.0$.
+6. Include all research done, data analysis, model training, statistical analysis etc. code in src/research
+7. The src/ directory must contain a pdf / markdown file explaining your rationale, analysis and strategy (max 10 pages)
 
 ### Common Pitfalls to Avoid:
 
