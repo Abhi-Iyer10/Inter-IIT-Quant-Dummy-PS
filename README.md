@@ -8,35 +8,48 @@ Welcome to the official backtesting engine for the Inter IIT Tech Meet 15.0 Quan
 
 ## Table of Contents
 
-1. [Overview &amp; Architectural Philosophy](#1-overview--architectural-philosophy)
-2. [Quickstart (Run in 60 Seconds)](#2-quickstart-run-in-60-seconds)
-3. [Repository Layout &amp; Code Boundaries](#3-repository-layout--code-boundaries)
-4. [How to Structure Your Strategy Code](#4-how-to-structure-your-strategy-code)
-   - [Mandatory Entry Point: `src/engine.py`](#mandatory-entry-point-srcenginepy)
-   - [Lifecycle: `initialize(context)`](#lifecycle-initializecontext)
-   - [Lifecycle: `on_bar(context, bars)`](#lifecycle-on_barcontext-bars)
-   - [Recommended Directory Modularity](#recommended-directory-modularity)
-   - [High-Frequency Optimization Rules (Track B)](#high-frequency-optimization-rules-track-b)
-5. [Core API Contracts (`strategy_base.py`)](#5-core-api-contracts-strategy_basepy)
-   - [The `Context` Object](#the-context-object)
-   - [The `Bar` &amp; `FastBarView` Data Structures](#the-bar--fastbarview-data-structures)
-6. [Execution Simulation &amp; Order Mechanics](#6-execution-simulation--order-mechanics)
-   - [Zero Lookahead Bias (Next-Bar Open Execution)](#zero-lookahead-bias-next-bar-open-execution)
-   - [Target Allocation &amp; Share Rebalancing Math](#target-allocation--share-rebalancing-math)
-   - [Transaction Friction Models (Slippage &amp; Commission)](#transaction-friction-models-slippage--commission)
-   - [Mark-to-Market Valuation](#mark-to-market-valuation)
-7. [Hard Constraints &amp; Rule Guard](#7-hard-constraints--rule-guard)
-   - [Gross Leverage Limit ($\le 1.0$)](#gross-leverage-limit-le-10)
-   - [Strict Non-Negative Capital Constraint ($\text{Capital} \ge 0$)](#strict-non-negative-capital-constraint-textcapital-ge-0)
-8. [Configuration &amp; CLI Execution](#8-configuration--cli-execution)
-   - [Configuring `config.yaml`](#configuring-configyaml)
-   - [Command-Line Flags (`run_backtest.py`)](#command-line-flags-run_backtestpy)
-9. [Interpreting Results &amp; Diagnostic Artifacts](#9-interpreting-results--diagnostic-artifacts)
-   - [Evaluation Metrics Table](#evaluation-metrics-table)
-   - [`results/summary.json`](#resultssummaryjson)
-   - [`results/trades.csv`](#resultstradescsv)
-   - [4-Panel Performance Tearsheet (`results/tearsheet.png`)](#4-panel-performance-tearsheet-resultstearsheetpng)
-10. [Pre-Submission Sanity Checks &amp; Best Practices](#10-pre-submission-sanity-checks--best-practices)
+- [Quantitative Backtester User \& Developer Guide](#quantitative-backtester-user--developer-guide)
+  - [Table of Contents](#table-of-contents)
+  - [1. Overview \& Architectural Philosophy](#1-overview--architectural-philosophy)
+  - [2. Quickstart (Run in 60 Seconds)](#2-quickstart-run-in-60-seconds)
+    - [Step 0: Fork the repository and clone it on your machine](#step-0-fork-the-repository-and-clone-it-on-your-machine)
+    - [Step 1: Set Up Environment](#step-1-set-up-environment)
+    - [Step 2: Run Track A (Daily Cross-Sectional)](#step-2-run-track-a-daily-cross-sectional)
+    - [Step 3: Run Track B (1-Second Microstructure)](#step-3-run-track-b-1-second-microstructure)
+    - [Step 4: Run Pre-Submission Sanity Check](#step-4-run-pre-submission-sanity-check)
+  - [3. Repository Layout \& Code Boundaries](#3-repository-layout--code-boundaries)
+  - [4. How to Structure Your Strategy Code](#4-how-to-structure-your-strategy-code)
+    - [Mandatory Entry Point: `src/engine.py`](#mandatory-entry-point-srcenginepy)
+    - [Lifecycle: `initialize(context)`](#lifecycle-initializecontext)
+    - [Lifecycle: `on_bar(context, bars)`](#lifecycle-on_barcontext-bars)
+      - [How to detect the active track:](#how-to-detect-the-active-track)
+      - [How to submit orders:](#how-to-submit-orders)
+    - [Recommended Directory Modularity](#recommended-directory-modularity)
+    - [High-Frequency Optimization Rules (Track B)](#high-frequency-optimization-rules-track-b)
+  - [5. Core API Contracts (`strategy_base.py`)](#5-core-api-contracts-strategy_basepy)
+    - [The `Context` Object](#the-context-object)
+    - [The `Bar` \& `FastBarView` Data Structures](#the-bar--fastbarview-data-structures)
+      - [Direct OHLCV Attributes:](#direct-ohlcv-attributes)
+      - [Microstructure Properties (Cached \& Computed Lazily):](#microstructure-properties-cached--computed-lazily)
+  - [6. Execution Simulation \& Order Mechanics](#6-execution-simulation--order-mechanics)
+    - [Zero Lookahead Bias (Next-Bar Open Execution)](#zero-lookahead-bias-next-bar-open-execution)
+    - [Target Allocation \& Share Rebalancing Math](#target-allocation--share-rebalancing-math)
+    - [Transaction Friction Models (Slippage \& Commission)](#transaction-friction-models-slippage--commission)
+    - [Mark-to-Market Valuation](#mark-to-market-valuation)
+  - [7. Hard Constraints \& Rule Guard](#7-hard-constraints--rule-guard)
+    - [Gross Leverage Limit ($\\le 1.0$)](#gross-leverage-limit-le-10)
+    - [Strict Non-Negative Capital Constraint ($\\text{Capital} \\ge 0$)](#strict-non-negative-capital-constraint-textcapital-ge-0)
+  - [8. Configuration \& CLI Execution](#8-configuration--cli-execution)
+    - [Configuring `config.yaml`](#configuring-configyaml)
+    - [Command-Line Flags (`run_backtest.py`)](#command-line-flags-run_backtestpy)
+  - [9. Interpreting Results \& Diagnostic Artifacts](#9-interpreting-results--diagnostic-artifacts)
+    - [Evaluation Metrics Table](#evaluation-metrics-table)
+      - [Key Diagnostic Insights:](#key-diagnostic-insights)
+    - [`results/summary.json`](#resultssummaryjson)
+    - [`results/trades.csv`](#resultstradescsv)
+    - [4-Panel Performance Tearsheet (`results/tearsheet.png`)](#4-panel-performance-tearsheet-resultstearsheetpng)
+  - [10. Pre-Submission Sanity Checks \& Best Practices](#10-pre-submission-sanity-checks--best-practices)
+    - [Common Pitfalls to Avoid:](#common-pitfalls-to-avoid)
 
 ---
 
@@ -52,6 +65,18 @@ The backtester is designed to evaluate quantitative trading strategies under rea
 ---
 
 ## 2. Quickstart (Run in 60 Seconds)
+
+### Step 0: Fork the repository and clone it on your machine
+
+1. On GitHub, open the repository and select **Fork** to create a copy under your account.
+2. Clone your fork and enter the project directory:
+
+```bash
+git clone https://github.com/<your-username>/<repository-name>.git
+cd <repository-name>
+```
+
+Replace `<your-username>` and `<repository-name>` with your GitHub username and the repository name. Run the following steps from this directory.
 
 ### Step 1: Set Up Environment
 
@@ -447,7 +472,7 @@ When execution completes, a structured evaluation table is printed to your termi
 
 ```text
 =================================================================
-                QUANT BACKTEST EVALUATION SUMMARY        
+                QUANT BACKTEST EVALUATION SUMMARY          
 =================================================================
 -- PORTFOLIO PERFORMANCE -----------------------------------------
   Track                              :                        B
