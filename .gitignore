@@ -224,3 +224,6 @@ data/
 
 # evaluation results
 results/
+
+# backtester design
+ARCHITECTURE.md
