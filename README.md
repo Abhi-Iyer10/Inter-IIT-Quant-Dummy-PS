@@ -103,7 +103,7 @@ Backtester/
 ├── BACKTESTER_README.md      # THIS MANUAL: Complete participant usage guide
 ├── README.md                 # System architecture & specification blueprint
 ├── DATASET_README.md         # Detailed dataset schemas and field specifications
-├── requirements.txt          # Allowed scientific libraries
+├── requirements.txt          # [PARTICIPANT SPACE] Used libraries : Some initial libraries may be there, you can add more if you are using them
 ├── config.yaml               # Participant parameters (lookback, cadence, tracks)
 │
 ├── strategy_base.py          # [DO NOT MODIFY] Core API contracts (BaseStrategy, Context, Bar)
@@ -279,6 +279,7 @@ Represents market data for an asset at time step $t$.
 #### Microstructure Properties (Cached & Computed Lazily):
 
 - **`bar.ofi` (Order Flow Imbalance):**
+
   $$
   \text{OFI} = \frac{\text{taker\_buy\_volume} - \text{taker\_sell\_volume}}{\text{volume}} \in [-1.0, 1.0]
   $$
@@ -329,10 +330,12 @@ $$
 To prevent unrealistic high-frequency scalping, every order pays realistic friction:
 
 1. **Execution Slippage:**
+
    - Buy Orders: $\quad P_{\text{fill}} = \text{Open}_{t+1} \times (1 + \text{SlippageRate})$
    - Sell Orders: $\quad P_{\text{fill}} = \text{Open}_{t+1} \times (1 - \text{SlippageRate})$
-     *(Default: 0.05% = 5 bps)*
+     *(Default: 0.00% = 0 bps)*
 2. **Transaction Commission:**
+
    $$
    \text{Commission} = |\Delta \text{Shares}| \times P_{\text{fill}} \times \text{CommissionRate}
    $$
@@ -395,7 +398,7 @@ Central settings can be adjusted in `config.yaml`:
 ```yaml
 track: "A"                  # Default track: "A" or "B"
 initial_cash: 100000.0      # Starting capital ($100,000.00)
-slippage_rate: 0.0005       # 5 bps execution slippage
+slippage_rate: 0.0000       # 0 bps execution slippage
 commission_rate: 0.0001     # 1 bp commission
 
 track_a:
@@ -437,7 +440,7 @@ When execution completes, a structured evaluation table is printed to your termi
 
 ```text
 =================================================================
-                QUANT BACKTEST EVALUATION SUMMARY              
+                QUANT BACKTEST EVALUATION SUMMARY            
 =================================================================
 -- PORTFOLIO PERFORMANCE -----------------------------------------
   Track                              :                        B
