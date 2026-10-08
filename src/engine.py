@@ -29,18 +29,18 @@ class ParticipantStrategy(BaseStrategy):
         """
         random.seed(42)
         
-        # Configuration & state tracking
+        # Configuration & state tracking (Optimized via src/research)
         self.rebalance_cadence: int = 5    # Track A: rebalance portfolio every 5 days
         self.track_b_decision_interval: int = 10  # Track B: evaluate every 10 seconds
         
         # Memory storage for asset price history (sliding windows)
         self.history: Dict[str, List[float]] = {}
-        self.lookback_window: int = 252    # 12-month lookback window
-        self.top_k: int = 5                # Top K asset selection
+        self.lookback_window: int = 252    # 12-month lookback window (252 days)
+        self.top_k: int = 5                # Top-5 asset portfolio selection
         self.skip_mom: int = 21            # Skip recent 1-month return (21 days)
         self.lookback_vol: int = 30        # 30-day realized volatility lookback
-        self.w_mom: float = 0.7            # Weight for Momentum Z-score
-        self.w_rev: float = 0.3            # Weight for Reversal Z-score
+        self.w_mom: float = -0.3            # Ridge-optimized weight for Momentum Z-score
+        self.w_rev: float = 0.7            # Ridge-optimized weight for Reversal Z-score
 
         print(f"[ParticipantStrategy] Initialized with universe: {len(context.universe)} assets.")
         if context.symbol:
@@ -86,7 +86,7 @@ class ParticipantStrategy(BaseStrategy):
         if context.step % self.rebalance_cadence != 0 or context.step < self.lookback_window:
             return
 
-        # 3. Sample Signal & Volatility Modeling
+        # 3. Dual-Factor Signal & Volatility Modeling
         # Computes 12m-1m Momentum & 1m Reversal signals, ranks assets,
         # selects top K, and scales weights inversely by volatility (vol-adjusted)
         mom_scores: Dict[str, float] = {}
@@ -144,6 +144,12 @@ class ParticipantStrategy(BaseStrategy):
             target_weights = {ticker: w / total_abs_weight for ticker, w in raw_weights.items()}
         else:
             target_weights = {ticker: 0.0 for ticker in raw_weights}
+
+        # Apply 25% single-asset cap constraint
+        target_weights = {ticker: min(w, 0.25) for ticker, w in target_weights.items()}
+        sum_capped = sum(target_weights.values())
+        if sum_capped > 0:
+            target_weights = {ticker: w / sum_capped for ticker, w in target_weights.items()}
 
         # 5. Submit target allocations to context
         context.set_target_weights(target_weights)
