@@ -9,6 +9,7 @@ This file provides a baseline random/signal sample strategy to test the complete
 from __future__ import annotations
 import math
 import random
+import numpy as np
 from typing import Dict, List, Optional
 
 from strategy_base import BaseStrategy, Context, Bar
@@ -34,7 +35,12 @@ class ParticipantStrategy(BaseStrategy):
         
         # Memory storage for asset price history (sliding windows)
         self.history: Dict[str, List[float]] = {}
-        self.lookback_window: int = 20
+        self.lookback_window: int = 252    # 12-month lookback window
+        self.top_k: int = 5                # Top K asset selection
+        self.skip_mom: int = 21            # Skip recent 1-month return (21 days)
+        self.lookback_vol: int = 30        # 30-day realized volatility lookback
+        self.w_mom: float = 0.7            # Weight for Momentum Z-score
+        self.w_rev: float = 0.3            # Weight for Reversal Z-score
 
         print(f"[ParticipantStrategy] Initialized with universe: {len(context.universe)} assets.")
         if context.symbol:
@@ -77,29 +83,60 @@ class ParticipantStrategy(BaseStrategy):
                 self.history[ticker].pop(0)
 
         # 2. Only rebalance on defined cadence
-        if context.step % self.rebalance_cadence != 0:
+        if context.step % self.rebalance_cadence != 0 or context.step < self.lookback_window:
             return
 
         # 3. Sample Signal & Volatility Modeling
-        # For demonstration: generates random buy/sell directional signals
-        # and scales them inversely by sample standard deviation (vol-adjusted)
-        raw_weights: Dict[str, float] = {}
-        for ticker, bar in bars.items():
-            prices = self.history.get(ticker, [])
-            if len(prices) >= 2:
-                # Simple return volatility proxy
-                returns = [prices[i] / prices[i - 1] - 1.0 for i in range(1, len(prices))]
-                mean_r = sum(returns) / len(returns)
-                var_r = sum((r - mean_r) ** 2 for r in returns) / len(returns)
-                vol = math.sqrt(var_r) if var_r > 1e-8 else 0.01
-            else:
-                vol = 0.01
+        # Computes 12m-1m Momentum & 1m Reversal signals, ranks assets,
+        # selects top K, and scales weights inversely by volatility (vol-adjusted)
+        mom_scores: Dict[str, float] = {}
+        rev_scores: Dict[str, float] = {}
 
-            # Generate random score (-1.0 to +1.0)
-            score = random.uniform(-1.0, 1.0)
-            
-            # Volatility-adjusted inverse sizing: w ~ score / vol
-            raw_weights[ticker] = score / vol
+        for ticker, prices in self.history.items():
+            if len(prices) >= self.lookback_window:
+                p = np.array(prices, dtype=np.float64)
+                
+                # Signal 1: 12m - 1m Cross-Sectional Momentum
+                ret_12m_1m = (p[-self.skip_mom] - p[-self.lookback_window]) / p[-self.lookback_window]
+                mom_scores[ticker] = float(ret_12m_1m)
+
+                # Signal 2: 1m Short-Term Reversal (-1 * 21-day return)
+                ret_1m = (p[-1] - p[-self.skip_mom]) / p[-self.skip_mom]
+                rev_scores[ticker] = float(-1.0 * ret_1m)
+
+        if not mom_scores:
+            return
+
+        # Cross-sectional standardization (Z-score normalization)
+        tickers = list(mom_scores.keys())
+        mom_vals = np.array([mom_scores[t] for t in tickers], dtype=np.float64)
+        rev_vals = np.array([rev_scores[t] for t in tickers], dtype=np.float64)
+
+        mom_std = np.std(mom_vals)
+        rev_std = np.std(rev_vals)
+
+        mom_z = (mom_vals - np.mean(mom_vals)) / (mom_std + 1e-8) if mom_std > 0 else np.zeros_like(mom_vals)
+        rev_z = (rev_vals - np.mean(rev_vals)) / (rev_std + 1e-8) if rev_std > 0 else np.zeros_like(rev_vals)
+
+        composite_scores = {
+            t: float(self.w_mom * mz + self.w_rev * rz)
+            for t, mz, rz in zip(tickers, mom_z, rev_z)
+        }
+
+        # Select Top K assets
+        top_assets = sorted(composite_scores.keys(), key=lambda x: composite_scores[x], reverse=True)[:self.top_k]
+
+        # Inverse-volatility risk parity sizing
+        raw_weights: Dict[str, float] = {}
+        for ticker in top_assets:
+            p_hist = self.history[ticker]
+            if len(p_hist) >= self.lookback_vol:
+                log_rets = np.diff(np.log(p_hist[-self.lookback_vol:]))
+                vol = float(np.std(log_rets) * np.sqrt(252))
+                vol = max(1e-4, vol)
+            else:
+                vol = 0.25
+            raw_weights[ticker] = 1.0 / vol
 
         # 4. Normalize weights so gross leverage sum(|w_i|) <= 1.0 (strict rule)
         total_abs_weight = sum(abs(w) for w in raw_weights.values())

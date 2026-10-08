@@ -224,6 +224,7 @@ data/
 
 # evaluation results
 results/
+src/generate_report.py
 
 # backtester design
 ARCHITECTURE.md
